@@ -7,8 +7,8 @@
 ---
 
 ## Integrantes
-Daniel Riveros 
-Manuel Castillo 
+- Daniel Riveros 
+- Manuel Castillo 
 
 ---
 
