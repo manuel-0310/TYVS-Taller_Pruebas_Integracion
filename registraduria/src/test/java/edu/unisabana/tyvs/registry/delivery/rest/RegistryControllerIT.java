@@ -1,6 +1,8 @@
 // src/test/java/edu/unisabana/tyvs/registry/delivery/rest/RegistryControllerIT.java
 package edu.unisabana.tyvs.registry.delivery.rest;
 
+import edu.unisabana.tyvs.registry.application.port.out.RegistryRepositoryPort;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,9 +13,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.http.*;
 import org.springframework.test.context.junit4.SpringRunner;
 
-import edu.unisabana.tyvs.registry.application.port.out.RegistryRepositoryPort;
-
-// src/test/java/.../RegistryControllerIT.java
 @RunWith(SpringRunner.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public class RegistryControllerIT {
@@ -37,6 +36,14 @@ public class RegistryControllerIT {
     @Autowired
     private TestRestTemplate rest;
 
+    @Autowired
+    private RegistryRepositoryPort repo;
+
+    @Before
+    public void cleanup() throws Exception {
+        repo.deleteAll();
+    }
+
     @Test
     public void shouldRegisterValidPerson() {
         String json = "{\"name\":\"Ana\",\"id\":100,\"age\":30,\"gender\":\"FEMALE\",\"alive\":true}";
@@ -46,5 +53,37 @@ public class RegistryControllerIT {
 
         assert resp.getStatusCode() == HttpStatus.OK;
         assert "VALID".equals(resp.getBody());
+    }
+
+    @Test
+    public void shouldReturnUnderageForYoungPerson() {
+        String json = "{\"name\":\"Joven\",\"id\":201,\"age\":15,\"gender\":\"MALE\",\"alive\":true}";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> resp = rest.postForEntity("/register", new HttpEntity<>(json, headers), String.class);
+
+        assert resp.getStatusCode() == HttpStatus.OK;
+        assert "UNDERAGE".equals(resp.getBody());
+    }
+
+    @Test
+    public void shouldReturnDeadForDeceasedPerson() {
+        String json = "{\"name\":\"Fallecida\",\"id\":302,\"age\":50,\"gender\":\"FEMALE\",\"alive\":false}";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> resp = rest.postForEntity("/register", new HttpEntity<>(json, headers), String.class);
+
+        assert resp.getStatusCode() == HttpStatus.OK;
+        assert "DEAD".equals(resp.getBody());
+    }
+
+    @Test
+    public void shouldReturnBadRequestForInvalidGender() {
+        String json = "{\"name\":\"Laura\",\"id\":500,\"age\":20,\"gender\":\"OTHER\",\"alive\":true}";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> resp = rest.postForEntity("/register", new HttpEntity<>(json, headers), String.class);
+
+        assert resp.getStatusCode() == HttpStatus.BAD_REQUEST;
     }
 }

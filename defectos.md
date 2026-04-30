@@ -89,9 +89,11 @@ when(repo.existsById(7)).thenReturn(true);
 - **Resultado esperado:** `HTTP 400` (Bad Request)
 - **Resultado obtenido:** `HTTP 500` (Internal Server Error)
 - **Causa probable:** Falta de validación o manejo de excepción `IllegalArgumentException` en el controlador.
-- **Tipo de prueba:** Sistema (MockMvc)
-- **Estado:** Abierto
+- **Tipo de prueba:** Sistema (`TestRestTemplate`)
+- **Estado:** Resuelto
 - **Prioridad:** Alta
+- **Corrección aplicada:** Se agregó `@ExceptionHandler(IllegalArgumentException.class)` con `@ResponseStatus(HttpStatus.BAD_REQUEST)` en `RegistryController`. Ahora devuelve `HTTP 400` con body `"INVALID_INPUT"`.
+- **Evidencia:** ![Ciclo TDD GREEN](img/tdd-green-ciclo1.png)
 
 ---
 
@@ -103,7 +105,7 @@ when(repo.existsById(7)).thenReturn(true);
 | 02 | Persona muerta | Dominio | `DEAD` | `VALID` | Unitaria | En progreso | Media |
 | 03 | Duplicado por ID | Infraestructura | `DUPLICATED` | `VALID` | Integración | Abierto | Alta |
 | 04 | Mock mal configurado | Aplicación | `DUPLICATED` | `NullPointerException` | Integración (mock) | En progreso | Media |
-| 05 | Error HTTP 500 | Delivery | `HTTP 400` | `HTTP 500` | Sistema (REST) | Abierto | Alta |
+| 05 | Error HTTP 500 | Delivery | `HTTP 400` | `HTTP 500` | Sistema (REST) | **Resuelto** | Alta |
 
 ---
 

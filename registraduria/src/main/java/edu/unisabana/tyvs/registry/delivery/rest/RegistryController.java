@@ -6,6 +6,7 @@ import edu.unisabana.tyvs.registry.domain.model.Gender;
 import edu.unisabana.tyvs.registry.domain.model.Person;
 import edu.unisabana.tyvs.registry.domain.model.RegisterResult;
 import edu.unisabana.tyvs.registry.domain.model.rq.PersonDTO;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 
@@ -24,7 +25,13 @@ public class RegistryController {
     public String register(@RequestBody PersonDTO dto) {
         Person p = new Person(dto.getName(), dto.getId(), dto.getAge(),
                 Gender.valueOf(dto.getGender()), dto.isAlive());
-        RegisterResult r = registry.registerVoter(p);   
+        RegisterResult r = registry.registerVoter(p);
         return r.name();
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public String handleInvalidArgument(IllegalArgumentException ex) {
+        return "INVALID_INPUT";
     }
 }

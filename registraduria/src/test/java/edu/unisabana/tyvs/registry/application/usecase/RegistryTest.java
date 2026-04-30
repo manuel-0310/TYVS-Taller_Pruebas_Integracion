@@ -87,4 +87,54 @@ public class RegistryTest {
         // Assert segundo registro
         assertEquals(RegisterResult.DUPLICATED, result2);
     }
+
+    /**
+     * Caso de prueba:
+     * <p>Una persona menor de 18 años no puede registrarse como votante.</p>
+     */
+    @Test
+    public void shouldReturnUnderageWhenPersonIsTooYoung() throws Exception {
+        // Arrange
+        Person minor = new Person("Luis", 200, 16, Gender.MALE, true);
+
+        // Act
+        RegisterResult result = registry.registerVoter(minor);
+
+        // Assert
+        assertEquals(RegisterResult.UNDERAGE, result);
+        assertFalse(repo.existsById(200));
+    }
+
+    /**
+     * Caso de prueba:
+     * <p>Una persona fallecida no puede registrarse como votante.</p>
+     */
+    @Test
+    public void shouldReturnDeadWhenPersonIsNotAlive() throws Exception {
+        // Arrange
+        Person deceased = new Person("Rosa", 300, 45, Gender.FEMALE, false);
+
+        // Act
+        RegisterResult result = registry.registerVoter(deceased);
+
+        // Assert
+        assertEquals(RegisterResult.DEAD, result);
+        assertFalse(repo.existsById(300));
+    }
+
+    /**
+     * Caso de prueba:
+     * <p>Un ID igual a cero o negativo es rechazado como inválido.</p>
+     */
+    @Test
+    public void shouldReturnInvalidWhenIdIsZeroOrNegative() throws Exception {
+        // Arrange
+        Person invalidId = new Person("Juan", 0, 25, Gender.MALE, true);
+
+        // Act
+        RegisterResult result = registry.registerVoter(invalidId);
+
+        // Assert
+        assertEquals(RegisterResult.INVALID, result);
+    }
 }

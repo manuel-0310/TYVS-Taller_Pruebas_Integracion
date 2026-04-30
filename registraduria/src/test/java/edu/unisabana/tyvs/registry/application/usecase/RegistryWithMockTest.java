@@ -8,6 +8,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
@@ -71,5 +72,57 @@ public class RegistryWithMockTest {
         // Assert: verificar resultado y comportamiento esperado del mock
         assertEquals(RegisterResult.DUPLICATED, result);
         verify(repo, never()).save(anyInt(), anyString(), anyInt(), anyBoolean());
+    }
+
+    /**
+     * Caso de prueba: verificar que save() se invoca cuando la persona es válida.
+     *
+     * <p><b>Escenario (BDD):</b></p>
+     * <ul>
+     *   <li><b>Given</b>: una persona válida con ID=10 y el repositorio indica que no existe.</li>
+     *   <li><b>When</b>: se registra la persona.</li>
+     *   <li><b>Then</b>: el resultado es {@link RegisterResult#VALID}
+     *       y se invoca exactamente una vez {@code save(...)} en el repositorio.</li>
+     * </ul>
+     */
+    @Test
+    public void shouldCallSaveWhenPersonIsValid() throws Exception {
+        // Arrange
+        when(repo.existsById(10)).thenReturn(false);
+        Person p = new Person("Carlos", 10, 30, Gender.MALE, true);
+
+        // Act
+        RegisterResult result = registry.registerVoter(p);
+
+        // Assert
+        assertEquals(RegisterResult.VALID, result);
+        verify(repo).save(10, "Carlos", 30, true);
+    }
+
+    /**
+     * Caso de prueba: el caso de uso propaga la excepción cuando el repositorio falla al guardar.
+     *
+     * <p><b>Escenario (BDD):</b></p>
+     * <ul>
+     *   <li><b>Given</b>: el repositorio lanza una RuntimeException al invocar save().</li>
+     *   <li><b>When</b>: se intenta registrar una persona válida.</li>
+     *   <li><b>Then</b>: el caso de uso envuelve la excepción en IllegalStateException.</li>
+     * </ul>
+     */
+    @Test
+    public void shouldPropagateExceptionWhenRepositoryFails() throws Exception {
+        // Arrange
+        when(repo.existsById(anyInt())).thenReturn(false);
+        doThrow(new RuntimeException("DB error"))
+                .when(repo).save(anyInt(), anyString(), anyInt(), anyBoolean());
+        Person p = new Person("Error", 20, 30, Gender.MALE, true);
+
+        // Act & Assert
+        try {
+            registry.registerVoter(p);
+            fail("Se esperaba IllegalStateException");
+        } catch (IllegalStateException e) {
+            assertTrue(e.getMessage().contains("DB error"));
+        }
     }
 }

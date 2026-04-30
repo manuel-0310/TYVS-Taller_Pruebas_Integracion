@@ -1,0 +1,9 @@
+Integrantes del equipo
+======================
+
+Daniel Riveros - daniel.riveros@unisabana.edu.co
+Manuel Castillo - manuel.castillo@unisabana.edu.co
+
+Curso: Testing y Validación de Software
+Programa: Maestría en Ingeniería de Software
+Universidad de La Sabana — 2025
