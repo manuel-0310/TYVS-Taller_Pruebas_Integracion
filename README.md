@@ -1,742 +1,366 @@
-# Taller de Pruebas de Integración y Sistema
+# Taller de Pruebas de Integración y Sistema — Documentación de Entrega
 
-Este taller tiene como objetivo aprender a diseñar, implementar y ejecutar **pruebas de integración** y **pruebas de sistema** en un proyecto Maven.
-En el flujo de desarrollo de software, a diferencia de las **pruebas unitarias** (que verifican clases de forma aislada), las pruebas de integración y sistema permiten verificar cómo los **componentes interactúan entre sí** y cómo funciona el sistema **como un todo**.
-
----
-
-## 🎯 Objetivo General
-
-Comprender, diseñar e implementar **pruebas de integración y de sistema** sobre una aplicación con **arquitectura limpia**, usando herramientas como **JUnit 4/5**, **Mockito**, **H2** y **Spring Boot Test**.
+**Curso:** Testing y Validación de Software  
+**Programa:** Maestría en Ingeniería de Software — Universidad de La Sabana  
+**Año:** 2025
 
 ---
 
-## 📑 Índice
-
-- [PRUEBAS DE INTEGRACIÓN BÁSICAS](#pruebas-de-integración-básicas)
-- [Prueba de Integración con BD H2](#prueba-de-integración-con-bd-h2)
-- [Pruebas de Integración con Mocks](#pruebas-de-integración-con-mocks)
-- [Prueba de Sistema caja negra](#prueba-de-sistema-caja-negra)
-- [Ejecución de las pruebas](#ejecución-de-las-pruebas)
-- [Buenas prácticas](#buenas-prácticas)
-- [Para entregar](#para-entregar-con-este-taller)
-- [Resumen del Taller](#hagamos-un-resumen)
-- [Conclusión](#conclusión)
-- [Recursos recomendados](#recursos-recomendados)
+## Integrantes
+Daniel Riveros 
+Manuel Castillo 
 
 ---
 
-## Conceptos clave
+## 1. Descripción del dominio
 
-- **Pruebas de integración**
-Verifican que los módulos del sistema se comuniquen y trabajen juntos correctamente.
-Ejemplo: la clase `Registry` (que valida votantes) + `RegistryRepository` (que guarda en la base de datos).
+El sistema **Registraduría** valida y registra ciudadanos habilitados para votar. Cada registro se evalúa según las siguientes reglas de negocio:
 
-- **Pruebas de sistema**
-Verifican el comportamiento del software como caja negra, a través de su interfaz pública (ej: endpoints HTTP, CLI).
-Ejemplo: hacer un `POST /register` y validar la respuesta sin importar la implementación interna.
+- El ID debe ser mayor que cero.
+- La persona debe estar viva (`alive = true`).
+- La persona debe tener 18 años o más.
+- No puede existir un registro previo con el mismo ID.
 
-## COMOCE EL TALLER
+El resultado del intento de registro es uno de los valores del enum `RegisterResult`:
 
-### Estructura del Proyecto
+| Resultado | Condición |
+|-----------|-----------|
+| `VALID` | Persona válida y registrada exitosamente |
+| `INVALID` | ID igual a cero o negativo |
+| `UNDERAGE` | Edad menor de 18 años |
+| `DEAD` | La persona no está viva (`alive = false`) |
+| `DUPLICATED` | Ya existe un registro con ese ID |
 
-Verifica los nuevos componentes en la estrucutra del ejercicio de la registraduría:
+---
 
-```gherkin
-main/edu/unisabana/tyvs/registry/
- ├─ domain/
- │   ├─ model/                 # Person, Gender, RegisterResult
- │   └─ service/               # (vacío) o mueve Registry a application
- ├─ application/
- │   ├─ usecase/               # Registry
- │   └─ port/out/              # RegistryRepositoryPort
- ├─ infrastructure/persistence/# RegistryRepository (H2/JDBC), RegistryRecord
- │   ├─ RegistryRecord
- │   └─ RegistryRepository
- └─ delivery/                    # capa de exposición (inbound adapters)
-   ├─ rest/                     # HTTP/REST
-   │  ├─ RegistryController.java
-   │  └─ dto/PersonRequest.java
-   ├─ cli/                      # (si algún día hay consola)
-   └─ messaging/                # (si algún día hay colas)
-test/edu/unisabana/tyvs/registry/
- ├─ application/
- │   ├─ usecase/               # RegistryTest, RegistryWithMockTest
- └─ delivery/                    # capa de exposición (inbound adapters)
-     ├─ rest/                     # RegistryControllerIT
+## 2. Tipos de pruebas implementadas
+
+| Tipo | Descripción | Herramienta | Anotación / Clase |
+|------|-------------|-------------|-------------------|
+| **Integración con H2** | Verifica la interacción real entre `Registry` y `RegistryRepository` sobre una BD en memoria | JUnit 4 + H2 | `RegistryTest.java` |
+| **Integración con Mockito** | Aísla el caso de uso simulando el repositorio con mocks | JUnit 4 + Mockito | `RegistryWithMockTest.java` |
+| **Sistema (HTTP)** | Prueba los endpoints REST de extremo a extremo levantando el servidor completo | Spring Boot Test + TestRestTemplate | `RegistryControllerIT.java` |
+
+---
+
+## 3. Arquitectura limpia
+
+El proyecto sigue el patrón de **Arquitectura Hexagonal (Puertos y Adaptadores)**, organizado en cuatro capas bien delimitadas:
+
+```
+edu.unisabana.tyvs.registry/
+├── domain/
+│   └── model/              ← Entidades puras del negocio: Person, Gender, RegisterResult
+├── application/
+│   ├── usecase/            ← Orquestación: Registry (valida y delega al puerto)
+│   └── port/out/           ← Interfaz: RegistryRepositoryPort (contrato de persistencia)
+├── infrastructure/
+│   └── persistence/        ← Adaptador JDBC/H2: RegistryRepository, RegistryRecord
+└── delivery/
+    └── rest/               ← Adaptador HTTP: RegistryController, PersonDTO
 ```
 
----
-
-### Configuración de Dependencias
-
-Agregamos dependencias y plugins clave al `pom.xml`.
-
-```xml
-  <dependencies>
-    <!-- JUnit 5 -->
-    <dependency>
-      <groupId>org.junit.vintage</groupId>
-      <artifactId>junit-vintage-engine</artifactId>
-      <version>5.10.2</version>
-      <scope>test</scope>
-    </dependency>
-
-    <!-- JUnit 4 -->
-    <dependency>
-      <groupId>junit</groupId>
-      <artifactId>junit</artifactId>
-      <version>4.13.2</version>
-      <scope>test</scope>
-    </dependency>
-
-    <!-- Mockito para crear dobles de prueba -->
-    <dependency>
-      <groupId>org.mockito</groupId>
-      <artifactId>mockito-core</artifactId>
-      <version>5.12.0</version>
-      <scope>test</scope>
-    </dependency>
-
-    <!-- Web + JSON -->
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-web</artifactId>
-    </dependency>
-
-    <!-- Tests Spring + JUnit 4/5 -->
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-test</artifactId>
-      <scope>test</scope>
-      <exclusions>
-        <!-- si te quedas con JUnit 4, excluye vintage o ajusta según tu setup -->
-      </exclusions>
-    </dependency>
-
-    <!-- H2: base de datos en memoria para pruebas de integración -->
-    <dependency>
-      <groupId>com.h2database</groupId>
-      <artifactId>h2</artifactId>
-      <version>2.2.224</version>
-      <scope>test</scope>
-    </dependency>
-
-    <dependency>
-      <groupId>org.projectlombok</groupId>
-      <artifactId>lombok</artifactId>
-      <version>1.18.34</version>
-    </dependency>
-
-  </dependencies>
-```
-
-**Explicación:**
-
-- `junit-jupiter`: corresponde al motor de **JUnit 5**, que incluye las anotaciones principales como `@Test`, `@BeforeEach`, `@AfterEach` y la clase `Assertions`.
-En este proyecto se utiliza **JUnit 4** como base, pero también se integra **JUnit 5** (Jupiter) para la ejecución de pruebas más especializadas o con nuevas características del framework, como el soporte para pruebas parametrizadas o mayor compatibilidad con **Spring Boot Test**.
-- `mockito-core`: simula dependencias externas, ideal cuando no quieres depender de IO real.
-- `h2`: BD embebida que se crea en memoria para cada prueba → rápida, aislada, no requiere instalación.
+**Beneficio para las pruebas:** cada capa puede probarse de forma independiente. El caso de uso `Registry` acepta cualquier implementación de `RegistryRepositoryPort`, lo que permite inyectar una instancia real de H2, un mock de Mockito, o un fake en memoria.
 
 ---
 
-## PRUEBAS DE INTEGRACIÓN BÁSICAS
+## 4. Pruebas de integración con H2
 
----
+Las pruebas de integración verifican la interacción real entre el caso de uso `Registry` y el adaptador `RegistryRepository`, sin mocks. La base de datos H2 se crea en memoria, se inicializa el esquema y se limpia antes de cada prueba.
 
-### Prueba de Integración con BD H2
+### Patrón AAA aplicado
 
-Las pruebas de integración evalúan la **interacción entre múltiples módulos o capas**.
-En este taller, se probará la relación entre el **caso de uso `Registry`** y el **adaptador `RegistryRepository`** (que usa una BD en memoria H2).
-
-#### Ejemplo Base: `RegistryTest`
-
-Crear el archivo: `edu/unisabana/tyvs/registry/application/usecase/RegistryTest.java`
-
-Dentro de la clase agregar el método, lea atentamente la documentación de la clase:
+El `@Before` inicializa H2 en memoria y limpia la tabla antes de cada test, garantizando aislamiento total entre casos:
 
 ```java
-package edu.unisabana.tyvs.registry.application.usecase;
-
-import edu.unisabana.tyvs.registry.application.port.out.RegistryRepositoryPort;
-import edu.unisabana.tyvs.registry.domain.model.Gender;
-import edu.unisabana.tyvs.registry.domain.model.Person;
-import edu.unisabana.tyvs.registry.domain.model.RegisterResult;
-import edu.unisabana.tyvs.registry.infrastructure.persistence.RegistryRepository;
-
-import org.junit.Before;
-import org.junit.Test;
-
-import static org.junit.Assert.*;
-
-/**
- * Pruebas de integración para el caso de uso {@link Registry}, aplicando el formato AAA:
- * <ul>
- *   <li><b>Arrange</b>: preparación de datos y objetos a probar.</li>
- *   <li><b>Act</b>: ejecución del método bajo prueba.</li>
- *   <li><b>Assert</b>: verificación de los resultados esperados.</li>
- * </ul>
- */
-public class RegistryTest {
-
-    private RegistryRepositoryPort repo;
-    private Registry registry;
-
-    /**
-     * Arrange común a todos los tests:
-     * <ul>
-     *   <li>Instancia un repositorio H2 en memoria.</li>
-     *   <li>Inicializa el esquema (tabla) y limpia datos previos.</li>
-     *   <li>Construye el caso de uso inyectando el repositorio.</li>
-     * </ul>
-     */
-    @Before
-    public void setup() throws Exception {
-        String jdbc = "jdbc:h2:mem:regdb;DB_CLOSE_DELAY=-1";
-        repo = new RegistryRepository(jdbc);
-
-        repo.initSchema();   // Arrange: crear tabla
-        repo.deleteAll();    // Arrange: limpiar datos previos
-
-        registry = new Registry(repo); // Arrange: inyectar dependencia
-    }
-
-    /**
-     * Caso de prueba:
-     * <p>Una persona válida debe ser registrada exitosamente.</p>
-     */
-    @Test
-    public void shouldRegisterValidPerson() throws Exception {
-        // Arrange
-        Person p1 = new Person("Ana", 100, 30, Gender.FEMALE, true);
-
-        // Act
-        RegisterResult result = registry.registerVoter(p1);
-
-        // Assert
-        assertEquals(RegisterResult.VALID, result);
-        assertTrue(repo.existsById(100));
-    }
-
-    /**
-     * Caso de prueba:
-     * <p>Al intentar registrar dos personas con el mismo ID:</p>
-     * <ul>
-     *   <li>La primera se guarda como válida.</li>
-     *   <li>La segunda es rechazada como duplicada.</li>
-     * </ul>
-     */
-    @Test
-    public void shouldPersistValidVoterAndRejectDuplicates() throws Exception {
-        // Arrange
-        Person p1 = new Person("Ana", 100, 30, Gender.FEMALE, true);
-        Person p2 = new Person("AnaDos", 100, 40, Gender.FEMALE, true);
-
-        // Act (primer registro)
-        RegisterResult result1 = registry.registerVoter(p1);
-
-        // Assert primer registro
-        assertEquals(RegisterResult.VALID, result1);
-        assertTrue(repo.existsById(100));
-
-        // Act (segundo registro con mismo ID)
-        RegisterResult result2 = registry.registerVoter(p2);
-
-        // Assert segundo registro
-        assertEquals(RegisterResult.DUPLICATED, result2);
-    }
+@Before
+public void setup() throws Exception {
+    String jdbc = "jdbc:h2:mem:regdb;DB_CLOSE_DELAY=-1";
+    repo = new RegistryRepository(jdbc);
+    repo.initSchema();   // Arrange: crear tabla
+    repo.deleteAll();    // Arrange: limpiar datos previos
+    registry = new Registry(repo);
 }
 ```
 
-#### Explicación paso a paso
-
-1. **@BeforeEach → setup()**
-   - Configura una BD H2 en memoria (`jdbc:h2:mem:regdb;DB_CLOSE_DELAY=-1`).
-   - Llama a `repo.initSchema()` para crear la tabla de votantes.
-   - Crea un objeto `Registry` que usará ese `repo` real.
-
-2. **Test**
-   - Inserta a `p1` → el método `registry.registerVoter(p1)` ejecuta un `INSERT INTO voters(...)`.
-   - Luego se hace una validación directa con `repo.existsById(100)` → consulta a la tabla H2 para confirmar que quedó.
-   - Inserta a `p2` con mismo id → antes de intentar guardar, se hace un `SELECT` en la BD y detecta duplicado, devolviendo `DUPLICATED`.
-
-👉 Así queda más claro: en la **primera llamada** se hace el insert, y en la **segunda llamada** se valida el duplicado consultando la base de datos.
-
-#### Actividades con el uso de BD H2
-
-1. Implementa pruebas para los siguientes casos:
-   - Persona duplicada (`DUPLICATED`)
-   - Menor de edad (`UNDERAGE`)
-   - Persona fallecida (`DEAD`)
-   - ID inválido (`INVALID`)
-2. Aplica el formato **AAA (Arrange – Act – Assert)** en cada test.
-3. Añade aserciones que verifiquen la persistencia real con H2.
-
-#### 💡 Reto adicional con el uso de BD H2
-
-Simula un error de conexión en H2 y observa cómo responde tu caso de uso.
-
----
-
-### Pruebas de Integración con Mocks
-
-Cuando no se desea usar una base de datos real, podemos **simular el repositorio** con Mockito.
-
-#### Ejemplo Base: `RegistryWithMockTest`
-
-Archivo: `src/test/edu/unisabana/tyvs/registry/application/usecase/RegistryWithMockTest.java`
+Ejemplo de test completo con verificación de persistencia real:
 
 ```java
-package edu.unisabana.tyvs.registry.application.usecase;
+@Test
+public void shouldReturnDeadWhenPersonIsNotAlive() throws Exception {
+    // Arrange
+    Person deceased = new Person("Rosa", 300, 45, Gender.FEMALE, false);
 
-import edu.unisabana.tyvs.registry.application.port.out.RegistryRepositoryPort;
-import edu.unisabana.tyvs.registry.domain.model.Gender;
-import edu.unisabana.tyvs.registry.domain.model.Person;
-import edu.unisabana.tyvs.registry.domain.model.RegisterResult;
-import org.junit.Before;
-import org.junit.Test;
+    // Act
+    RegisterResult result = registry.registerVoter(deceased);
 
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.*;
-
-/**
- * Clase de prueba unitaria para {@link Registry} utilizando un mock de {@link RegistryRepositoryPort}.
- *
- * <p>Estas pruebas ilustran cómo aislar el caso de uso del repositorio real,
- * aplicando dobles de prueba (Mockito) para simular los escenarios.</p>
- *
- * <p><b>Formato AAA:</b></p>
- * <ul>
- *   <li><b>Arrange</b>: se preparan datos y comportamiento del mock.</li>
- *   <li><b>Act</b>: se ejecuta el método bajo prueba.</li>
- *   <li><b>Assert</b>: se verifican resultados y que no haya interacciones no deseadas.</li>
- * </ul>
- *
- * <p><b>Beneficio:</b> este tipo de prueba es una <i>unitaria pura</i>,
- * sin necesidad de levantar bases de datos ni infraestructura adicional.</p>
- */
-public class RegistryWithMockTest {
-
-    /** Mock del puerto de persistencia. */
-    private RegistryRepositoryPort repo;
-
-    /** Caso de uso bajo prueba, instanciado con el mock. */
-    private Registry registry;
-
-    /**
-     * Configura el mock y el caso de uso antes de cada prueba.
-     *
-     * <p>Se crea un mock de {@link RegistryRepositoryPort} usando Mockito
-     * y se inyecta en la instancia de {@link Registry}.</p>
-     */
-    @Before
-    public void setUp() {
-        repo = mock(RegistryRepositoryPort.class);
-        registry = new Registry(repo);
-    }
-
-    /**
-     * Caso de prueba: detectar registros duplicados.
-     *
-     * <p><b>Escenario (BDD):</b></p>
-     * <ul>
-     *   <li><b>Given</b>: una persona con ID=7 y el repositorio ya indica que ese ID existe.</li>
-     *   <li><b>When</b>: se intenta registrar la persona.</li>
-     *   <li><b>Then</b>: el resultado debe ser {@link RegisterResult#DUPLICATED}
-     *       y no se debe invocar el método {@code save(...)} en el repositorio.</li>
-     * </ul>
-     *
-     * @throws Exception propagada en caso de error durante la ejecución.
-     */
-    @Test
-    public void shouldReturnDuplicatedWhenRepoSaysExists() throws Exception {
-        // Arrange: configurar mock y datos
-        when(repo.existsById(7)).thenReturn(true);
-        Person p = new Person("Ana", 7, 25, Gender.FEMALE, true);
-
-        // Act: ejecutar método bajo prueba
-        RegisterResult result = registry.registerVoter(p);
-
-        // Assert: verificar resultado y comportamiento esperado del mock
-        assertEquals(RegisterResult.DUPLICATED, result);
-        verify(repo, never()).save(anyInt(), anyString(), anyInt(), anyBoolean());
-    }
+    // Assert
+    assertEquals(RegisterResult.DEAD, result);
+    assertFalse(repo.existsById(300)); // confirma que NO se persistió
 }
-
 ```
 
-#### Explicación del Test con Mockito
+### Casos cubiertos
 
-- `mock(RegistryRepositoryPort.class)`: crea un doble de prueba.
-- `when(repo.existsById(7)).thenReturn(true)`: simula que ya existe un votante con id 7.
-- `assertEquals(...)`: validamos que el `Registry` responde `DUPLICATED`.
-- `verify(...)`: asegura que nunca se llamó a `repo.save(...)` → es decir, no intentó grabar un duplicado.
-
-👉 Aquí no usamos BD real, sino un **mock** para aislar la prueba a la interacción con el repositorio.
-
-#### Actividades con Mockito
-
-1. Implementa un mock del repositorio que devuelva `false` en `existsById()` y verifique que `save()` se invoca.
-2. Implementa un mock que simule una excepción SQL y verifica que tu caso de uso la maneje correctamente.
-3. Usa `verify(repo).save(...)` para confirmar la interacción esperada.
-
-#### 💡 Reto adicional con Mocks
-
-Crea una versión **FakeRepository** que guarde los datos en una `HashMap` en memoria sin usar Mockito.
+| Método de prueba | Caso | Resultado esperado |
+|-----------------|------|--------------------|
+| `shouldRegisterValidPerson` | Persona adulta, viva, ID único | `VALID` + persiste en BD |
+| `shouldPersistValidVoterAndRejectDuplicates` | Mismo ID dos veces | Primera `VALID`, segunda `DUPLICATED` |
+| `shouldReturnUnderageWhenPersonIsTooYoung` | Edad = 16 | `UNDERAGE`, no persiste |
+| `shouldReturnDeadWhenPersonIsNotAlive` | `alive = false` | `DEAD`, no persiste |
+| `shouldReturnInvalidWhenIdIsZeroOrNegative` | ID = 0 | `INVALID` |
 
 ---
 
-### Prueba de Sistema caja negra
+## 5. Pruebas con Mockito
 
-Las pruebas de sistema validan el **comportamiento del sistema completo**, incluyendo controladores HTTP, lógica de negocio y persistencia.
+Las pruebas con Mockito aíslan el caso de uso `Registry` del repositorio real, simulando sus respuestas y verificando las interacciones.
 
-#### Ejemplo Base: `RegistryControllerIT`
-
-Archivo: `src/test/java/edu/unisabana/tyvs/registry/delivery/rest/RegistryControllerIT.java`
+### `verify` y `never` — sin duplicados no se llama a `save()`
 
 ```java
-// src/test/java/edu/unisabana/tyvs/registry/delivery/rest/RegistryControllerIT.java
-package edu.unisabana.tyvs.registry.delivery.rest;
+@Test
+public void shouldReturnDuplicatedWhenRepoSaysExists() throws Exception {
+    // Arrange
+    when(repo.existsById(7)).thenReturn(true);
+    Person p = new Person("Ana", 7, 25, Gender.FEMALE, true);
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.web.client.TestRestTemplate;
-import org.springframework.context.annotation.Bean;
-import org.springframework.http.*;
-import org.springframework.test.context.junit4.SpringRunner;
+    // Act
+    RegisterResult result = registry.registerVoter(p);
 
-import edu.unisabana.tyvs.registry.application.port.out.RegistryRepositoryPort;
+    // Assert
+    assertEquals(RegisterResult.DUPLICATED, result);
+    verify(repo, never()).save(anyInt(), anyString(), anyInt(), anyBoolean());
+}
+```
 
-// src/test/java/.../RegistryControllerIT.java
+### `verify` — persona válida sí invoca `save()`
+
+```java
+@Test
+public void shouldCallSaveWhenPersonIsValid() throws Exception {
+    // Arrange
+    when(repo.existsById(10)).thenReturn(false);
+    Person p = new Person("Carlos", 10, 30, Gender.MALE, true);
+
+    // Act
+    RegisterResult result = registry.registerVoter(p);
+
+    // Assert
+    assertEquals(RegisterResult.VALID, result);
+    verify(repo).save(10, "Carlos", 30, true); // invocación exacta verificada
+}
+```
+
+### Casos cubiertos
+
+| Método de prueba | Comportamiento simulado | Verificación |
+|-----------------|------------------------|--------------|
+| `shouldReturnDuplicatedWhenRepoSaysExists` | `existsById` → `true` | `DUPLICATED` + `never().save()` |
+| `shouldCallSaveWhenPersonIsValid` | `existsById` → `false` | `VALID` + `verify().save(...)` |
+| `shouldPropagateExceptionWhenRepositoryFails` | `save()` lanza `RuntimeException` | `IllegalStateException` propagada |
+
+---
+
+## 6. Pruebas de sistema (HTTP)
+
+Las pruebas de sistema validan los endpoints REST del sistema completo. Spring Boot levanta un servidor en un puerto aleatorio y `TestRestTemplate` actúa como cliente HTTP real. El `@Before` limpia la BD antes de cada test para evitar interferencias entre casos:
+
+```java
 @RunWith(SpringRunner.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public class RegistryControllerIT {
 
-    @TestConfiguration
-    static class TestBeans {
-        @Bean
-        public RegistryRepositoryPort registryRepositoryPort() throws Exception {
-            String jdbc = "jdbc:h2:mem:regdb;DB_CLOSE_DELAY=-1";
-            var repo = new edu.unisabana.tyvs.registry.infrastructure.persistence.RegistryRepository(jdbc);
-            repo.initSchema();
-            return repo;
-        }
+    @Autowired private TestRestTemplate rest;
+    @Autowired private RegistryRepositoryPort repo;
 
-        @Bean
-        public edu.unisabana.tyvs.registry.application.usecase.Registry registry(RegistryRepositoryPort port) {
-            return new edu.unisabana.tyvs.registry.application.usecase.Registry(port);
-        }
+    @Before
+    public void cleanup() throws Exception {
+        repo.deleteAll(); // aislamiento entre tests
     }
-
-    @Autowired
-    private TestRestTemplate rest;
 
     @Test
     public void shouldRegisterValidPerson() {
         String json = "{\"name\":\"Ana\",\"id\":100,\"age\":30,\"gender\":\"FEMALE\",\"alive\":true}";
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        ResponseEntity<String> resp = rest.postForEntity("/register", new HttpEntity<>(json, headers), String.class);
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> resp = rest.postForEntity("/register", new HttpEntity<>(json, h), String.class);
 
         assert resp.getStatusCode() == HttpStatus.OK;
         assert "VALID".equals(resp.getBody());
     }
+
+    @Test
+    public void shouldReturnBadRequestForInvalidGender() {
+        String json = "{\"name\":\"Laura\",\"id\":500,\"age\":20,\"gender\":\"OTHER\",\"alive\":true}";
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> resp = rest.postForEntity("/register", new HttpEntity<>(json, h), String.class);
+
+        assert resp.getStatusCode() == HttpStatus.BAD_REQUEST; // 400, no 500
+    }
 }
 ```
 
-#### Explicación del Test de sistemas
+### Casos cubiertos
 
-- **System under test:** un servidor mínimo que expone `/register`.
-- El test **no sabe nada de clases internas** (`Registry`, `Person`) → solo valida que si hago un `POST`, la respuesta es correcta.
-- Esto es lo más parecido a cómo un **cliente real** interactuaría con el sistema.
-
-#### Actividades con Sistemas
-
-1. Realiza pruebas con distintos cuerpos JSON que produzcan los estados `VALID`, `DUPLICATED`, `UNDERAGE`, `DEAD`.
-2. Usa Postman o curl para verificar los endpoints `/register` y documenta tus observaciones.
-3. Implementa una prueba negativa (JSON incompleto o tipo incorrecto).
-
-#### 💡 Reto adicional con Sistemas
-
-Agrega validaciones con `@Valid` en el `PersonDTO` y prueba que el sistema devuelva errores HTTP adecuados (`400`, `409`, `422`).
+| Método de prueba | Entrada | HTTP Status | Body |
+|-----------------|---------|-------------|------|
+| `shouldRegisterValidPerson` | Persona válida | `200 OK` | `VALID` |
+| `shouldReturnUnderageForYoungPerson` | Edad = 15 | `200 OK` | `UNDERAGE` |
+| `shouldReturnDeadForDeceasedPerson` | `alive = false` | `200 OK` | `DEAD` |
+| `shouldReturnBadRequestForInvalidGender` | `gender = "OTHER"` (no existe en enum) | `400 Bad Request` | `INVALID_INPUT` |
 
 ---
 
-### Ejecución de las pruebas
+## 7. Ciclo TDD demostrado
 
-- Solo unitarias:
+Se aplicó TDD para corregir el **Defecto 05**: el controlador devolvía `HTTP 500` ante un género inválido, cuando lo correcto es `HTTP 400`.
+
+### RED — Test escrito antes de implementar
+
+Se agrega `shouldReturnBadRequestForInvalidGender()` a `RegistryControllerIT`. El test espera `HTTP 400`, pero el controlador no tenía manejo de excepción, por lo que `Gender.valueOf("OTHER")` lanzaba `IllegalArgumentException` → Spring devolvía `500`.
+
+![Estado RED: test fallando](img/tdd-red-ciclo1.png)
+
+### GREEN — Implementación mínima
+
+Se agrega `@ExceptionHandler(IllegalArgumentException.class)` con `@ResponseStatus(BAD_REQUEST)` en `RegistryController`. Todos los tests pasan.
+
+```java
+@ExceptionHandler(IllegalArgumentException.class)
+@ResponseStatus(HttpStatus.BAD_REQUEST)
+public String handleInvalidArgument(IllegalArgumentException ex) {
+    return "INVALID_INPUT";
+}
+```
+
+![Estado GREEN: todos los tests pasan](img/tdd-green-ciclo1.png)
+
+---
+
+## 8. Resultados — Cobertura JaCoCo
+
+El reporte de cobertura se genera en `registraduria/target/site/jacoco/index.html` al ejecutar:
 
 ```bash
-mvn test
+cd registraduria && mvn clean verify
 ```
 
-- Unitarias + integración + sistema:
+### Vista general
+
+![Reporte JaCoCo — cobertura general](img/jacoco-reporte-general.png)
+
+### Paquete `application`
+
+![JaCoCo — paquete application](img/jacoco-paquete-application.png)
+
+### Paquete `delivery`
+
+![JaCoCo — paquete delivery](img/jacoco-paquete-delivery.png)
+
+### Análisis de cobertura
+
+| Paquete | Cobertura obtenida | Requisito mínimo |
+|---------|-------------------|-----------------|
+| Global | ver reporte | ≥ 80% |
+| `application` | ver reporte | ≥ 70% |
+| `delivery` | ver reporte | ≥ 70% |
+
+**Clases no cubiertas o con cobertura parcial:**
+- `RegistryApplication`: solo contiene el método `main()` de Spring Boot, que no se ejecuta durante los tests de integración. Esto es una práctica estándar y no afecta la confiabilidad del sistema.
+- `RegistryConfig`: los beans están comentados intencionalmente (la configuración de beans para tests se aporta mediante `@TestConfiguration`). No contiene lógica de negocio.
+
+---
+
+## 9. Matriz de pruebas
+
+| # | Caso | Entrada | Resultado esperado | Tipo | Clase de test |
+|---|------|---------|-------------------|------|---------------|
+| 1 | Persona válida registrada | ID=100, edad=30, viva | `VALID`, persiste en BD | H2 | `RegistryTest.shouldRegisterValidPerson` |
+| 2 | Segundo registro con mismo ID | ID=100 (ya existe) | `DUPLICATED` | H2 | `RegistryTest.shouldPersistValidVoterAndRejectDuplicates` |
+| 3 | Persona menor de edad | ID=200, edad=16 | `UNDERAGE`, no persiste | H2 | `RegistryTest.shouldReturnUnderageWhenPersonIsTooYoung` |
+| 4 | Persona fallecida | ID=300, alive=false | `DEAD`, no persiste | H2 | `RegistryTest.shouldReturnDeadWhenPersonIsNotAlive` |
+| 5 | ID inválido (cero) | ID=0 | `INVALID` | H2 | `RegistryTest.shouldReturnInvalidWhenIdIsZeroOrNegative` |
+| 6 | Duplicado detectado por mock | ID=7, mock dice "existe" | `DUPLICATED`, sin llamar save() | Mockito | `RegistryWithMockTest.shouldReturnDuplicatedWhenRepoSaysExists` |
+| 7 | save() invocado en persona válida | ID=10, mock dice "no existe" | `VALID`, save() invocado 1 vez | Mockito | `RegistryWithMockTest.shouldCallSaveWhenPersonIsValid` |
+| 8 | Excepción en save() propagada | mock lanza RuntimeException | `IllegalStateException` | Mockito | `RegistryWithMockTest.shouldPropagateExceptionWhenRepositoryFails` |
+| 9 | Registro exitoso vía HTTP | POST /register, JSON válido | HTTP 200, body "VALID" | Sistema | `RegistryControllerIT.shouldRegisterValidPerson` |
+| 10 | Menor de edad vía HTTP | POST /register, edad=15 | HTTP 200, body "UNDERAGE" | Sistema | `RegistryControllerIT.shouldReturnUnderageForYoungPerson` |
+| 11 | Fallecida vía HTTP | POST /register, alive=false | HTTP 200, body "DEAD" | Sistema | `RegistryControllerIT.shouldReturnDeadForDeceasedPerson` |
+| 12 | Género inválido vía HTTP | POST /register, gender="OTHER" | HTTP 400, body "INVALID_INPUT" | Sistema | `RegistryControllerIT.shouldReturnBadRequestForInvalidGender` |
+
+---
+
+## 10. Gestión de defectos
+
+El archivo [`defectos.md`](defectos.md) registra los defectos detectados durante el desarrollo del taller.
+
+| ID | Defecto | Tipo | Estado |
+|----|---------|------|--------|
+| 01 | Edad negativa no valida como `INVALID_AGE` | Unitaria | Abierto |
+| 02 | Persona fallecida registrada como `VALID` | Unitaria | En progreso |
+| 03 | Duplicados no detectados en repositorio | Integración | Abierto |
+| 04 | Mock mal configurado lanza NPE | Integración (mock) | En progreso |
+| 05 | Género inválido devuelve HTTP 500 en lugar de 400 | Sistema (REST) | **Resuelto** |
+
+**Defecto 05 — flujo completo:**
+1. Se escribió el test `shouldReturnBadRequestForInvalidGender` → **RED** (500 obtenido, 400 esperado).
+2. Se implementó `@ExceptionHandler(IllegalArgumentException.class)` en `RegistryController`.
+3. Se ejecutó `mvn verify` → **GREEN** (400 devuelto correctamente).
+
+---
+
+## 11. Calidad del código
+
+- **Constantes implícitas:** la edad mínima de 18 años está centralizada en la condición `p.getAge() < 18` dentro de `Registry.registerVoter()`. Para refactorización futura, podría extraerse como `static final int MIN_AGE = 18`.
+- **Sin duplicación:** cada capa tiene una responsabilidad única; el repositorio no duplica lógica de negocio.
+- **Inversión de dependencias:** `Registry` depende de la interfaz `RegistryRepositoryPort`, no de la implementación concreta, permitiendo cambiar entre H2, PostgreSQL u otro adaptador sin tocar el caso de uso.
+- **Control de errores:** `Registry.registerVoter()` captura excepciones de infraestructura y las envuelve en `IllegalStateException` con mensaje descriptivo. `RegistryController` captura `IllegalArgumentException` y devuelve `HTTP 400`.
+- **Separación de naming:** clases `*Test.java` para pruebas unitarias/integración con Surefire, `*IT.java` para pruebas de sistema con Failsafe.
+
+---
+
+## 12. Reflexión final
+
+### ¿Qué capas fueron más difíciles de probar y por qué?
+
+La capa `delivery` fue la más compleja, porque requiere levantar el contexto completo de Spring Boot (con `@SpringBootTest`) y coordinar la configuración de beans de test mediante `@TestConfiguration`. A diferencia de las pruebas con H2 o Mockito, cualquier error en la configuración del contexto impide que el servidor arranque, haciendo más difícil diagnosticar la causa raíz. Adicionalmente, se requirió gestionar el aislamiento de datos entre tests con `@Before cleanup()` para evitar interferencias entre tests que usan los mismos IDs.
+
+### ¿Qué beneficios observas en usar mocks frente a H2 o base real?
+
+Los mocks con Mockito son significativamente más rápidos (no requieren conexión JDBC) y permiten simular escenarios difíciles de reproducir con una base de datos real, como excepciones de red, timeouts o condiciones de carrera. Son ideales para verificar el comportamiento del caso de uso de forma aislada. Sin embargo, los mocks no garantizan que el SQL sea correcto ni que las restricciones de la base de datos funcionen. Las pruebas con H2 ofrecen mayor fidelidad: detectan problemas reales de persistencia (como la ausencia de `COMMIT` o una constraint mal definida) a cambio de mayor complejidad de configuración y tiempo de ejecución.
+
+### ¿Cómo mejorarías el diseño de `RegistryController` o `RegistryRepository` para facilitar las pruebas automáticas?
+
+Para `RegistryController`: extraer el `@ExceptionHandler` a un `@ControllerAdvice` centralizado permitiría reutilizar el manejo de errores en otros controladores y probarlos de forma independiente. Además, agregar `@Valid` en el `PersonDTO` descargaría la validación de campos nulos o vacíos al framework, simplificando los tests de integración.
+
+Para `RegistryRepository`: la dependencia de `RegistryRepositoryPort` en `RegistryRecord` (clase de infraestructura) viola el principio de inversión de dependencias de la arquitectura limpia. El puerto debería operar solo con tipos del dominio (`Person`) o tipos primitivos, sin importar clases de infraestructura. Esto facilitaría reemplazar el repositorio por cualquier otra implementación sin modificar el puerto.
+
+### ¿Qué aprendiste sobre integración continua (CI) al ejecutar tus pruebas con Maven y JaCoCo?
+
+Maven ofrece una separación nativa entre pruebas unitarias (Surefire, fase `test`) y pruebas de integración y sistema (Failsafe, fase `integration-test`), lo que permite ejecutar subconjuntos de pruebas según la etapa del pipeline. El comando `mvn clean verify` ejecuta toda la suite y genera el reporte de cobertura JaCoCo automáticamente, convirtiéndose en el único comando necesario para validar la calidad del código en un entorno de CI/CD. Esto elimina la necesidad de configuraciones manuales adicionales y garantiza que cada commit sea verificado con la misma suite de pruebas que se usó durante el desarrollo, reduciendo la probabilidad de regresiones.
+
+---
+
+## Ejecución
 
 ```bash
-mvn verify
+# Compilar y ejecutar todas las pruebas + generar cobertura JaCoCo
+cd registraduria
+mvn clean verify
+
+# Abrir reporte de cobertura
+open target/site/jacoco/index.html
 ```
 
-Reporte de cobertura combinado con JaCoCo:
-
-```gherkin
-target/site/jacoco/index.html
-```
+![Terminal: resultado de mvn verify](img/mvn-verify-resultado.png)
 
 ---
 
-## Automatización e integración (Opcional)
+## Recursos
 
-- Ejecuta las pruebas de integración en cada commit con CI (GitHub Actions, Jenkins, GitLab CI).
-- Rechaza merges si `mvn verify` falla.
-
-🎓 Esta guía presenta el proceso para la creación y configuración de flujos de Integración Continua (CI) utilizando GitHub Actions.
-Puedes consultarla en el siguiente enlace: [**Taller de Integración Continua en GitHub**](https://github.com/CesarAVegaF312/DAYS-Integracion_continua/tree/main/github).
-
----
-
-## Buenas prácticas
-
-1. **Separación clara:** `*Test.java` → unitarias, `*IT.java` → integración/sistema.
-2. **Datos aislados:** usar BD en memoria (H2) evita que las pruebas dependan de un entorno externo.
-3. **Mocks en los límites:** Mockito es útil para pruebas rápidas cuando no quieres depender de IO real.
-4. **Pruebas de sistema = caja negra:** siempre probar por interfaces externas (API, CLI, UI).
-
----
-
-## PARA ENTREGAR CON ESTE TALLER
-
-### 1) Repositorio
-
-- **Repositorio Git** con el proyecto completo y **URL pública o acceso por invitación**.
-- Archivo **`.gitignore`** (excluir `target/`, `.idea/`, `.vscode/`, etc.).
-- Archivo **`integrantes.txt`** o sección en el README con nombres y correos institucionales.
-- **Rama principal ejecutable:** debe compilar y correr con `mvn clean verify` sin configuraciones manuales adicionales.
-
-### 2) Documentación en Wiki (obligatoria)
-
-> Toda la documentación del taller se entrega en el **Wiki del repositorio**.
-> No se requiere PDF; el Wiki es la entrega oficial.
-
-Estructura mínima sugerida del Wiki:
-
-- **Inicio:** descripción breve del dominio, propósito del sistema y miembros del equipo.
-- **Tipos de pruebas:** diferencia clara entre unitarias, integración y sistema (tabla o esquema).
-- **Arquitectura limpia:** diagrama de capas usadas (`domain`, `application`, `infrastructure`, `delivery`).
-- **Pruebas de Integración:** explicación de cómo se conectan las capas y la base de datos (H2 o mock).
-- **Pruebas con Mockito:** ejemplos de uso de `when(...)`, `verify(...)`, `never(...)`.
-- **Pruebas de Sistema (HTTP):** escenarios y evidencias de ejecución (capturas o respuestas JSON).
-- **Resultados:** capturas del **reporte JaCoCo** y breve análisis de cobertura.
-- **Conclusiones técnicas:** aprendizajes y limitaciones detectadas.
-
-Incluye **enlaces al código** (`Registry.java`, `RegistryController.java`, tests) dentro de cada sección del Wiki.
-
-### 3) Pruebas de Integración
-
-- Al menos **3 pruebas con base de datos H2** cubriendo interacciones reales entre `Registry` y `RegistryRepository`.
-- Casos mínimos:
-  - Persona válida → `VALID`
-  - Persona duplicada → `DUPLICATED`
-  - Persona menor de edad → `UNDERAGE`
-  - Persona fallecida → `DEAD`
-- Deben ejecutarse sin mocks, verificando que los datos se persisten realmente.
-- Usa formato **AAA (Arrange – Act – Assert)** y nombres descriptivos (`shouldReturnDuplicatedWhenIdExists()`).
-
-### 4) Pruebas de Integración con Mocks
-
-- Al menos **2 pruebas con Mockito**, simulando el repositorio o adaptador externo.
-- Verificar interacciones con:
-  - `verify(repo).save(...)`
-  - `verify(repo, never()).save(...)`
-- Incluir un caso de excepción controlada (`when(repo.save(...)).thenThrow(...)`) y manejo correcto del error.
-- Comenta brevemente el propósito de cada test y la lógica simulada.
-
-### 5) Pruebas de Sistema (HTTP)
-
-- Al menos **2 pruebas end-to-end** usando:
-  - `TestRestTemplate`, `MockMvc` o cliente HTTP equivalente.
-- Validar los endpoints reales (`/register`) devolviendo respuestas HTTP correctas (`200`, `400`, `500`).
-- Casos mínimos:
-  - Registro exitoso (status 200, body “VALID”).
-  - Entrada inválida o inconsistente (status 400 / 422).
-- Adjuntar en el Wiki **capturas del resultado** (Postman o terminal).
-
-### 6) Cobertura (JaCoCo)
-
-- Reporte **JaCoCo** generado en `target/site/jacoco/index.html`.
-- **Cobertura global ≥ 80%**, y al menos **70% en el paquete `application` y `delivery`**.
-- Adjuntar capturas en el Wiki e indicar **qué clases no se pudieron cubrir y por qué** (p. ej. excepciones controladas, código legado, etc.).
-
-### 7) Matriz de pruebas de integración
-
-- Tabla con los **casos de integración** probados:
-  - **Caso**, **Entrada**, **Resultado esperado**, **Tipo de prueba (H2/Mock/HTTP)**, **Test que lo valida**.
-
-**Ejemplo:**
-
-| Caso | Entrada | Resultado Esperado | Tipo | Test |
-|------|----------|--------------------|------|------|
-| Persona duplicada | ID=101 existente | `DUPLICATED` | H2 | `shouldReturnDuplicatedWhenExists()` |
-| Persona válida | ID=200, edad=25 | `VALID` | HTTP | `shouldRegisterValidPerson()` |
-
-### 8) Gestión de defectos
-
-- Archivo **`defectos.md`** con al menos **1 defecto real o simulado** detectado por pruebas de integración o sistema.
-  - **Caso probado**
-  - **Resultado esperado vs. obtenido**
-  - **Causa probable**
-  - **Estado:** Abierto / Cerrado
-  - **Evidencia:** fragmento de log o screenshot
-
-### 9) Calidad del código
-
-- Clases sin duplicación ni dependencias cíclicas.
-- Constantes reutilizables (`MIN_AGE`, `MAX_AGE`, etc.).
-- Nombrado claro y uso correcto de paquetes.
-- Control de errores con excepciones específicas y manejo en el controlador HTTP.
-- Eliminación de código comentado o redundante.
-
-### 10) Reflexión final (en el Wiki)
-
-- ¿Qué capas fueron más difíciles de probar y por qué?
-- ¿Qué beneficios observas en usar mocks frente a H2 o base real?
-- ¿Cómo mejorarías el diseño de `RegistryController` o `RegistryRepository` para facilitar las pruebas automáticas?
-- ¿Qué aprendiste sobre **integración continua (CI)** al ejecutar tus pruebas con Maven y JaCoCo?
-
-### 11) Rúbrica – Taller de Pruebas de Integración y Sistema
-
-| **Criterios de evaluación** | **Indicadores de cumplimiento** | **Excelente (5 pts)** | **Bueno (4 pts)** | **Necesita mejorar (3.5 pts)** | **Deficiente (2.5 pts)** | **No cumple (0 pts)** |
-|-----------------------------|----------------------------------|------------------------|-------------------|-------------------------------|--------------------------|------------------------|
-| **Estructura del proyecto y repositorio** | El repositorio está correctamente organizado, con `.gitignore`, ramas compilables y documentación básica. | Estructura limpia, compilable con `mvn clean verify`, incluye `.gitignore` y documentación. | Compila correctamente, estructura clara con mínimos ajustes. | Estructura parcialmente ordenada, requiere ajustes menores. | Errores de compilación o estructura desordenada. | No entrega o el código no ejecuta. |
-| **Documentación en Wiki** | Contiene secciones completas (Inicio, tipos de pruebas, resultados, reflexión, etc.) con enlaces al código. | Wiki completo, claro y con enlaces a todas las clases y tests. | Wiki completo con leves omisiones o sin algunos enlaces. | Wiki incompleto o con poca claridad. | Wiki muy limitado o confuso. | No hay Wiki o está vacío. |
-| **Pruebas de integración (H2)** | Implementa pruebas reales entre `Registry` y `RegistryRepository`. | ≥3 pruebas completas y funcionales, usando H2 y patrón AAA. | Pruebas funcionales pero con cobertura parcial. | Pruebas incompletas o sin verificación clara de persistencia. | Escenarios incorrectos o sin H2 configurado. | No existen pruebas de integración. |
-| **Pruebas con mocks (Mockito)** | Uso de mocks y verificación de interacciones. | ≥2 pruebas con Mockito usando `when`, `verify`, `never`, etc. correctamente. | Pruebas correctas pero con poca variedad o validación parcial. | Usa mocks sin verificar interacciones o comportamiento. | Configuración incorrecta de mocks. | No existen pruebas con mocks. |
-| **Pruebas de sistema (HTTP)** | Validación de endpoints reales con MockMvc o RestTemplate. | ≥2 pruebas HTTP completas (200, 400, 500), con aserciones válidas. | Pruebas funcionales pero con casos limitados. | Pruebas incompletas o con endpoints incorrectos. | Pruebas fallidas o sin conexión al servidor. | No existen pruebas HTTP. |
-| **Cobertura de pruebas (JaCoCo)** | Nivel de cobertura global y por capa. | ≥80% global y ≥70% en `application` y `delivery`. | Entre 70–79% global, sin grandes omisiones. | Cobertura media (50–69%) o irregular. | Cobertura <50%. | No presenta reporte o no genera cobertura. |
-| **Matriz de pruebas** | Tabla de casos probados y correspondencia con métodos de test. | Matriz completa, clara y actualizada. | Matriz parcial con algunos casos omitidos. | Matriz incompleta o sin correspondencia con código. | Matriz confusa o sin formato. | No entrega matriz. |
-| **Gestión de defectos** | Registro de defectos y análisis. | Documento `defectos.md` con al menos 1 caso bien analizado. | Documento con casos simulados pero comprensibles. | Documento incompleto o superficial. | Caso sin análisis o sin evidencias. | No entrega `defectos.md`. |
-| **Calidad del código** | Claridad, limpieza y consistencia del código. | Código limpio, sin duplicaciones, constantes extraídas, buen uso de excepciones. | Código comprensible con leves redundancias. | Código con duplicación o nombres poco claros. | Código confuso o sin buenas prácticas. | Código desorganizado o con errores graves. |
-| **Reflexión técnica** | Análisis de resultados y aprendizajes. | Reflexión profunda sobre diseño, pruebas y CI/CD. | Reflexión correcta pero superficial. | Reflexión breve o poco argumentada. | Reflexión vaga o sin relación con el taller. | No presenta reflexión. |
-
-| Rango de puntaje | Desempeño                                                |
-| ---------------- | -------------------------------------------------------- |
-| 45 – 50          | Excelente dominio técnico y metodológico.                |
-| 35 – 44          | Buen trabajo con documentación o cobertura parcial.      |
-| 30 – 34          | Cumple con lo básico pero sin profundidad.               |
-| < 30             | No cumple con los criterios mínimos del taller/proyecto. |
-
----
-
-## 🧭 Propósito del taller
-
-En este taller aplicamos distintas estrategias de **pruebas de integración y sistema** que permiten validar el correcto funcionamiento del software **más allá de las clases individuales**, garantizando la comunicación entre capas, la persistencia de datos y el comportamiento de los endpoints.
-
-A través del caso `Registry`, se aplican los principios de **Testing y Validación de Software** dentro de una **arquitectura limpia**, integrando los componentes de dominio, aplicación, infraestructura y capa de entrega (REST).
-El propósito es que los estudiantes comprendan cómo **verificar la interacción entre módulos reales o simulados**, usando herramientas como **H2**, **Mockito** y **Spring Boot Test**, asegurando un flujo confiable de extremo a extremo.
-
----
-
-## 🧩 Cómo usar esta guía para tu proyecto
-
-1. **Analiza la arquitectura base:** revisa cómo se comunican las capas (`domain`, `application`, `infrastructure`, `delivery`) y cómo se aislan las dependencias.
-2. **Ejecuta las pruebas de integración reales (con H2):** valida la persistencia y reglas del dominio con datos reales.
-3. **Implementa pruebas con mocks (Mockito):** simula interacciones con repositorios o servicios externos para probar comportamientos aislados.
-4. **Agrega pruebas de sistema (HTTP):** verifica los endpoints del controlador (`/register`) con `MockMvc` o `TestRestTemplate`, asegurando respuestas y códigos de estado correctos.
-5. **Usa el patrón AAA (Arrange – Act – Assert)** en todas las pruebas para mantener claridad, estructura y trazabilidad.
-6. **Documenta el proceso en el Wiki del repositorio**, incluyendo:
-   - Descripción del flujo de integración entre capas.
-   - Ejemplos de pruebas de integración y mocks.
-   - Resultados de pruebas de sistema con evidencias HTTP.
-   - Reporte de cobertura (JaCoCo) con análisis de métricas.
-   - Conclusiones sobre la importancia de integrar pruebas dentro del ciclo de desarrollo continuo (CI/CD).
-
----
-
-> 🎯 **Resultado esperado:**
-> Al finalizar este taller, cada estudiante o equipo contará con un proyecto con **pruebas de integración y sistema completas**, validando correctamente la interacción entre componentes, con una **cobertura mínima del 80%** y documentación clara que refleje la aplicación práctica de los conceptos de **Testing de Integración, Mockito, Arquitectura Limpia y Pruebas de Sistema (HTTP)**.
-
----
-
-## Hagamos un resumen
-
-### Pruebas de Integración
-
-- **Qué son:** validan que los diferentes **módulos o capas del sistema funcionen correctamente al interactuar entre sí**.
-- **Para qué sirven:** permiten detectar fallos en la comunicación entre componentes (por ejemplo, entre el servicio `Registry` y el repositorio `RegistryRepository`), asegurando que la lógica de negocio se mantenga consistente incluso al persistir o recuperar datos.
-- **Ejemplo típico:** usar una base de datos **H2** en memoria para verificar que las inserciones, consultas y restricciones se comportan como se espera.
-
-### Pruebas con Mocks (Mockito)
-
-- **Qué son:** pruebas que **simulan dependencias externas o colaboraciones** (por ejemplo, una base de datos o API externa) para validar la lógica de negocio sin ejecutar código real de infraestructura.
-- **Para qué sirven:** permiten aislar el comportamiento de la unidad probada, detectar llamadas inesperadas y asegurar que la integración se produzca bajo las condiciones correctas.
-- **Ejemplo típico:** usar `when(...).thenReturn(...)` y `verify(...)` para comprobar que se invoca el método `save()` solo cuando corresponde.
-
-### Pruebas de Sistema (HTTP)
-
-- **Qué son:** verifican el funcionamiento completo del sistema **desde la capa más externa (REST)**, simulando solicitudes reales de usuario a través de endpoints (`POST /register`).
-- **Para qué sirven:** prueban el flujo completo: request → capa de aplicación → persistencia → respuesta, validando códigos HTTP (`200`, `400`, `500`) y formatos JSON.
-- **Ejemplo típico:** usar `MockMvc` o `TestRestTemplate` para enviar un JSON con los datos de un ciudadano y recibir un resultado como texto (`VALID`, `DUPLICATED`, etc.).
-
-### Arquitectura Limpia en las pruebas
-
-- **Qué es:** una forma de organizar el sistema en capas separadas por responsabilidad:
-  - `domain`: contiene las reglas del negocio.
-  - `application`: coordina los casos de uso.
-  - `infrastructure`: maneja persistencia y comunicación externa.
-  - `delivery`: expone el sistema vía REST o interfaz.
-- **Para qué sirve:** facilita las pruebas independientes por capa, promueve el desacoplamiento y permite reemplazar implementaciones (por ejemplo, un repositorio real por uno simulado).
-
----
-
-## Conclusión
-
-En conjunto, estas prácticas permiten:
-
-- Validar la interacción entre componentes (**pruebas de integración**).
-- Simular dependencias de forma controlada (**mocks con Mockito**).
-- Evaluar el sistema de extremo a extremo (**pruebas HTTP o de sistema**).
-- Mantener código modular y verificable (**arquitectura limpia + AAA**).
-
-Con esto se logra **mayor confianza en los despliegues**, **mejor trazabilidad del comportamiento del sistema** y **evidencia sólida del cumplimiento de los requisitos funcionales y no funcionales**.
-
----
-
-## Recursos recomendados
-
-- *Clean Architecture* – Robert C. Martin
-- *Growing Object-Oriented Software, Guided by Tests* – Steve Freeman & Nat Pryce
-- Documentación oficial de [Mockito](https://site.mockito.org/)
+- [Mockito Documentation](https://site.mockito.org/)
 - [Spring Boot Test Reference](https://docs.spring.io/spring-boot/docs/current/reference/html/features.html#features.testing)
 - [JaCoCo Coverage Tool](https://www.jacoco.org/jacoco/)
-
----
-
-## Créditos y uso académico
-
-**Autor:** César Augusto Vega Fernández
-**Curso:** Testing y Validación de Software
-**Programa:** Maestría en Ingeniería de Software – Universidad de La Sabana
-**Año:** 2025
-
-Este taller y su contenido fueron diseñados por el profesor **César Augusto Vega Fernández** como material académico para el curso *Testing y Validación de Software*, impartido en la **Maestría en Ingeniería de Software de la Universidad de La Sabana**.
-
-Su propósito es exclusivamente educativo y está orientado a fortalecer las competencias de los estudiantes en **TDD, AAA, Clases de Equivalencia, BDD** y validación de software en contextos de arquitectura limpia.
-
----
-
-### Licencia de uso
-
-Este material se distribuye bajo la licencia [Creative Commons Atribución-NoComercial-CompartirIgual 4.0 Internacional (CC BY-NC-SA 4.0)](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.es).
-
-Puedes **usar, adaptar o compartir** este contenido con fines educativos, siempre que:
-
-1. Se reconozca la autoría del profesor **César Augusto Vega Fernández**.
-2. No se utilice con fines comerciales.
-3. Las obras derivadas se distribuyan bajo la misma licencia.
-
----
-
-© Universidad de La Sabana – Facultad de Ingeniería
-Maestría en Ingeniería de Software – 2025
+- *Clean Architecture* — Robert C. Martin
